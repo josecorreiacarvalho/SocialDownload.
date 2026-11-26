@@ -165,8 +165,11 @@ export default function NavegadorScreen() {
       function verificar() {
         const videos = Array.from(document.querySelectorAll('video'));
         const video = videos.find(v => !v.paused) || (videos.length === 1 ? videos[0] : null);
-        if (!video) return;
-        const urls = [video.currentSrc, video.src, ...Array.from(video.querySelectorAll('source')).map(s => s.src)];
+        const urls = video ? [video.currentSrc, video.src, ...Array.from(video.querySelectorAll('source')).map(s => s.src)] : [];
+        if (${JSON.stringify(plataforma?.nome === "Instagram")}) {
+          const meta = document.querySelectorAll('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"]');
+          for (const item of meta) urls.push(item.content);
+        } else if (!video) return;
         for (const valor of urls) {
           try {
             const u = new URL(valor);
@@ -262,7 +265,7 @@ export default function NavegadorScreen() {
 
       recebido.current = true;
 
-      const nome = `${plataforma?.nome ?? "TikDownload"}_${Date.now()}.mp4`;
+      const nome = `${plataforma?.nome ?? "TikTok"}_${Date.now()}.mp4`;
 
       downloadId = iniciarDownload(nome);
 
@@ -417,7 +420,7 @@ export default function NavegadorScreen() {
         {redeDireta && (
           <View style={{ padding: 12, backgroundColor: "#E6F4FE" }}>
             <Text style={styles.processingText}>
-              {videoDetectado ? "Vídeo detectado. Salve apenas conteúdo autorizado." : "Reproduza o vídeo. O botão será habilitado se houver um arquivo direto disponível."}
+              {videoDetectado ? "Vídeo detectado. Salve apenas conteúdo autorizado." : "Reproduza o vídeo. Se o botão continuar desativado, não foi encontrado um arquivo direto disponível."}
             </Text>
             <Pressable
               disabled={!videoDetectado}

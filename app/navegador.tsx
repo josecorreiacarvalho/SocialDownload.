@@ -31,14 +31,21 @@ export default function NavegadorScreen() {
   }>();
 
   const endereco = typeof link === "string" ? link : "";
-  const instagram = (() => {
+  const plataformas = [
+    { nome: "Instagram", dominios: ["instagram.com"], cdns: ["cdninstagram.com", "fbcdn.net"] },
+    { nome: "Facebook", dominios: ["facebook.com", "fb.watch", "fb.com"], cdns: ["fbcdn.net"] },
+    { nome: "Pinterest", dominios: ["pinterest.com", "pinterest.com.br", "pin.it"], cdns: ["pinimg.com"] },
+    { nome: "X", dominios: ["x.com", "twitter.com"], cdns: ["video.twimg.com"] },
+  ];
+  const pertence = (host: string, dominios: string[]) => dominios.some(d => host === d || host.endsWith("." + d));
+  const plataforma = (() => {
     try {
-      const url = new URL(endereco);
-      return url.protocol === "https:" &&
-        (url.hostname === "instagram.com" || url.hostname.endsWith(".instagram.com"));
-    } catch { return false; }
+      const u = new URL(endereco);
+      return u.protocol === "https:" ? plataformas.find(p => pertence(u.hostname, p.dominios)) : undefined;
+    } catch { return undefined; }
   })();
-  const [videoInstagram, setVideoInstagram] = useState<string | null>(null);
+  const redeDireta = !!plataforma;
+  const [videoDetectado, setVideoDetectado] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -146,30 +153,49 @@ export default function NavegadorScreen() {
     true;
   `;
 
-  const scriptInstagram = `
+  const scriptRedeSocial = `
     (function() {
-      if (!/(^|\\.)instagram\\.com$/.test(location.hostname)) return;
+      const dominios = ${JSON.stringify(plataforma?.dominios ?? [])};
+      const cdns = ${JSON.stringify(plataforma?.cdns ?? [])};
+      const pertence = (host, lista) => lista.some(d => host === d || host.endsWith('.' + d));
+      if (!pertence(location.hostname, dominios)) return;
       if (window.socialDownloadObservando) return;
       window.socialDownloadObservando = true;
       let anterior = '';
-      setInterval(function() {
+      function verificar() {
         const videos = Array.from(document.querySelectorAll('video'));
-        const video = videos.find(v => !v.paused && v.readyState >= 2);
-        const url = video && (video.currentSrc || video.src);
-        if (url && url !== anterior && url.startsWith('https://')) {
-          anterior = url;
-          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:url}));
+        const video = videos.find(v => !v.paused) || (videos.length === 1 ? videos[0] : null);
+        if (!video) return;
+        const urls = [video.currentSrc, video.src, ...Array.from(video.querySelectorAll('source')).map(s => s.src)];
+        for (const valor of urls) {
+          try {
+            const u = new URL(valor);
+            if (u.protocol !== 'https:' || !pertence(u.hostname, cdns)) continue;
+            if (u.href !== anterior) {
+              anterior = u.href;
+              window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:u.href}));
+            }
+            return;
+          } catch (_) {}
         }
-      }, 1000);
+        if (anterior) {
+          anterior = '';
+          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'semCandidato'}));
+        }
+      }
+      setInterval(verificar, 500);
+      document.addEventListener('loadedmetadata', verificar, true);
+      document.addEventListener('play', verificar, true);
+      verificar();
     })();
     true;
   `;
 
-  function urlInstagramValida(valor: string) {
+  function urlVideoValida(valor: string) {
     try {
       const u = new URL(valor);
       return u.protocol === "https:" &&
-        (u.hostname.endsWith(".cdninstagram.com") || u.hostname.endsWith(".fbcdn.net"));
+        !!plataforma && pertence(u.hostname, plataforma.cdns);
     } catch { return false; }
   }
 
@@ -207,9 +233,14 @@ export default function NavegadorScreen() {
     try {
       const dados = JSON.parse(mensagem);
 
-      if (instagram && dados.tipo === "candidato") {
-        if (typeof dados.url === "string" && urlInstagramValida(dados.url)) {
-          setVideoInstagram(dados.url);
+      if (redeDireta && dados.tipo === "semCandidato") {
+        setVideoDetectado(null);
+        return;
+      }
+
+      if (redeDireta && dados.tipo === "candidato") {
+        if (typeof dados.url === "string" && urlVideoValida(dados.url)) {
+          setVideoDetectado(dados.url);
         }
         return;
       }
@@ -223,7 +254,7 @@ export default function NavegadorScreen() {
         dados.tipo !== "video" ||
         typeof dados.url !== "string" ||
         !dados.url.startsWith("https://") ||
-        (instagram && !urlInstagramValida(dados.url)) ||
+        (redeDireta && !urlVideoValida(dados.url)) ||
         recebido.current
       ) {
         return;
@@ -231,7 +262,7 @@ export default function NavegadorScreen() {
 
       recebido.current = true;
 
-      const nome = `${instagram ? "Instagram" : "TikDownload"}_${Date.now()}.mp4`;
+      const nome = `${plataforma?.nome ?? "TikDownload"}_${Date.now()}.mp4`;
 
       downloadId = iniciarDownload(nome);
 
@@ -355,23 +386,25 @@ export default function NavegadorScreen() {
         </Pressable>
 
         <Text style={styles.title}>
-          {instagram ? "Instagram" : "SocialDownload"}
+          {plataforma?.nome ?? "SocialDownload"}
         </Text>
       </View>
 
       <View style={styles.browserContainer}>
         <WebView
-          source={{ uri: instagram ? endereco : "https://ssstik.io/" }}
+          source={{ uri: redeDireta ? endereco : "https://ssstik.io/" }}
           style={styles.webview}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState
-          injectedJavaScript={instagram ? scriptInstagram : scriptTikTok}
+          allowsInlineMediaPlayback
+          onLoadStart={() => { if (redeDireta) setVideoDetectado(null); }}
+          injectedJavaScript={redeDireta ? scriptRedeSocial : scriptTikTok}
           onShouldStartLoadWithRequest={(request) => {
-            if (!instagram) return true;
+            if (!redeDireta) return true;
             try {
               const u = new URL(request.url);
-              return u.protocol === "https:" && (u.hostname === "instagram.com" || u.hostname.endsWith(".instagram.com"));
+              return u.protocol === "https:" && !!plataforma && pertence(u.hostname, plataforma.dominios);
             } catch { return false; }
           }}
           onMessage={(event) => {
@@ -381,16 +414,16 @@ export default function NavegadorScreen() {
           }}
         />
 
-        {instagram && (
+        {redeDireta && (
           <View style={{ padding: 12, backgroundColor: "#E6F4FE" }}>
             <Text style={styles.processingText}>
-              {videoInstagram ? "Vídeo detectado. Salve apenas conteúdo autorizado." : "Reproduza o vídeo para testar a detecção."}
+              {videoDetectado ? "Vídeo detectado. Salve apenas conteúdo autorizado." : "Reproduza o vídeo. O botão será habilitado se houver um arquivo direto disponível."}
             </Text>
             <Pressable
-              disabled={!videoInstagram}
-              style={[styles.manualButton, { marginTop: 8, opacity: videoInstagram ? 1 : 0.5 }]}
+              disabled={!videoDetectado}
+              style={[styles.manualButton, { marginTop: 8, opacity: videoDetectado ? 1 : 0.5 }]}
               onPress={() => {
-                if (videoInstagram) void receberMensagem(JSON.stringify({ tipo: "video", url: videoInstagram }));
+                if (videoDetectado) void receberMensagem(JSON.stringify({ tipo: "video", url: videoDetectado }));
               }}
             >
               <Ionicons name="download-outline" size={20} color="#075985" />
@@ -398,7 +431,7 @@ export default function NavegadorScreen() {
             </Pressable>
           </View>
         )}
-        {!instagram && !mostrarSite && (
+        {!redeDireta && !mostrarSite && (
           <View style={styles.processingScreen}>
             <View style={styles.processingCard}>
               <Ionicons

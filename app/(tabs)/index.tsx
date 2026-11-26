@@ -18,10 +18,40 @@ import { useShareIntentContext } from "expo-share-intent";
 
 const BLUE = "#075985";
 const DARK = "#183B56";
+const REDES = [
+  { nome: "TikTok", dominios: ["tiktok.com"] },
+  { nome: "Instagram", dominios: ["instagram.com"] },
+  { nome: "Facebook", dominios: ["facebook.com", "fb.watch", "fb.com"] },
+  {
+    nome: "Pinterest",
+    dominios: ["pinterest.com", "pinterest.com.br", "pin.it"],
+  },
+  { nome: "X (Twitter)", dominios: ["x.com", "twitter.com"] },
+];
+
+function identificarRede(endereco: string) {
+  try {
+    const url = new URL(endereco.trim());
+
+    if (url.protocol !== "https:") return null;
+
+    return (
+      REDES.find((rede) =>
+        rede.dominios.some(
+          (dominio) =>
+            url.hostname === dominio || url.hostname.endsWith("." + dominio),
+        ),
+      ) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
 
 export default function HomeScreen() {
   const router = useRouter();
   const [link, setLink] = useState("");
+  const redeIdentificada = identificarRede(link);
   const { hasShareIntent, shareIntent, resetShareIntent } =
     useShareIntentContext();
 
@@ -58,39 +88,34 @@ export default function HomeScreen() {
 
   async function baixarVideo() {
     const endereco = link.trim();
+
     if (!endereco) {
       mostrarAlerta("Atenção", "Cole o link no SocialDownload.");
       return;
     }
-    try {
-      const url = new URL(endereco);
 
-      const redes = ["tiktok.com", "instagram.com"];
+    const plataforma = identificarRede(endereco);
 
-      if (
-        url.protocol !== "https:" ||
-        !redes.some(
-          (rede) => url.hostname === rede || url.hostname.endsWith("." + rede),
-        )
-      ) {
-        throw new Error();
-      }
-    } catch {
+    if (!plataforma) {
       mostrarAlerta(
         "Link inválido",
-        "Insira um link válido do TikTok ou Instagram.",
+        "Insira um link do TikTok, Instagram, Facebook, Pinterest ou X.",
       );
       return;
     }
+
     try {
       const somenteWifi = await AsyncStorage.getItem(
         "@TikDownload:somenteWifi",
       );
+
       const rede = await Network.getNetworkStateAsync();
+
       if (!rede.isConnected || rede.isInternetReachable === false) {
         mostrarAlerta("Sem conexão", "Verifique sua conexão com a internet.");
         return;
       }
+
       if (
         somenteWifi === "true" &&
         rede.type !== Network.NetworkStateType.WIFI
@@ -101,7 +126,11 @@ export default function HomeScreen() {
         );
         return;
       }
-      router.push({ pathname: "/navegador", params: { link: endereco } });
+
+      router.push({
+        pathname: "/navegador",
+        params: { link: endereco },
+      });
     } catch {
       mostrarAlerta(
         "Erro de conexão",
@@ -132,7 +161,9 @@ export default function HomeScreen() {
           <Text style={styles.cardTitle}>Baixar vídeo</Text>
         </View>
         <Text style={styles.description}>
-          Insira o link do TikTok ou Instagram
+          {redeIdentificada
+            ? `Rede identificada: ${redeIdentificada.nome}`
+            : "TikTok, Instagram, Facebook, Pinterest e X"}
         </Text>
         <View style={styles.inputContainer}>
           <Ionicons name="link-outline" size={21} color={BLUE} />
@@ -168,7 +199,7 @@ export default function HomeScreen() {
           <Text style={styles.cardTitle}>Como baixar?</Text>
         </View>
         {[
-         "Copie o link do vídeo na rede social.",
+          "Copie o link do vídeo na rede social.",
           "Cole o link no SocialDownload.",
           "Toque em Baixar vídeo.",
         ].map((texto, index) => (

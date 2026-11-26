@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
-
 import { WebView } from "react-native-webview";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,17 +18,13 @@ import {
   concluirDownload,
   falharDownload,
 } from "../downloadStorage";
-
 export default function NavegadorScreen() {
   const router = useRouter();
   const recebido = useRef(false);
-
   const [mostrarSite, setMostrarSite] = useState(false);
-
   const { link } = useLocalSearchParams<{
     link: string;
   }>();
-
   const endereco = typeof link === "string" ? link : "";
   const plataformas = [
     {
@@ -69,64 +64,49 @@ export default function NavegadorScreen() {
   const usarSnapInsta = plataforma?.nome === "Instagram";
   const story =
     plataforma?.nome === "Instagram" &&
-    /^https:\/\/[^/]+\/stories\//i.test(endereco);
+    (() => { try { return new URL(endereco).pathname.startsWith("/stories/"); } catch { return false; } })();
   const [tipoDetectado, setTipoDetectado] = useState<"video" | "foto">("video");
   const [videoDetectado, setVideoDetectado] = useState<string | null>(null);
-
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!recebido.current) {
         setMostrarSite(true);
       }
     }, 20000);
-
     return () => clearTimeout(timer);
   }, []);
-
   const scriptTikTok = `
     (function() {
       if (window.location.origin !== "https://ssstik.io") {
         return;
       }
-
       if (window.tikDownloadIniciado) {
         return;
       }
-
       window.tikDownloadIniciado = true;
-
       let tentativas = 0;
       let enviado = false;
-
       const timer = setInterval(function() {
         tentativas++;
-
         if (!enviado) {
           const campo = document.querySelector(
             '#main_page_text, input[name="id"], input[type="url"], input[type="text"]'
           );
-
           if (campo) {
             campo.value = ${JSON.stringify(link ?? "")};
-
             campo.dispatchEvent(
               new Event('input', { bubbles: true })
             );
-
             campo.dispatchEvent(
               new Event('change', { bubbles: true })
             );
-
             const formulario = campo.closest('form');
-
             if (formulario) {
               const botao = formulario.querySelector(
                 'button[type="submit"], input[type="submit"]'
               );
-
               if (botao && !botao.disabled) {
                 enviado = true;
-
                 setTimeout(function() {
                   botao.click();
                 }, 1000);
@@ -134,88 +114,89 @@ export default function NavegadorScreen() {
             }
           }
         }
-
         const botoes = document.querySelectorAll('a[href]');
-
         for (const botao of botoes) {
           const texto = botao.textContent
             .trim()
             .toLowerCase();
-
           if (
             texto.includes('without watermark') &&
             !texto.includes('mp3')
           ) {
             const endereco = botao.href;
-
             if (endereco.startsWith('https://')) {
               clearInterval(timer);
-
               window.ReactNativeWebView.postMessage(
                 JSON.stringify({
                   tipo: 'video',
                   url: endereco
                 })
               );
-
               return;
             }
           }
         }
-
         if (tentativas >= 120) {
           clearInterval(timer);
-
           window.ReactNativeWebView.postMessage(
             JSON.stringify({
               tipo: 'verificacao'
             })
           );
         }
-
       }, 500);
     })();
-
     true;
   `;
-
   const scriptSnapInsta = `
-  (function() {
-    if (window.snapInstaIniciado) return;
-    window.snapInstaIniciado = true;
-
-    let tentativas = 0;
-
-    const timer = setInterval(function() {
-      tentativas++;
-
-      const campo = document.querySelector(
-        'input[type="url"], input[type="text"]'
-      );
-
-      if (campo) {
-        campo.value = ${JSON.stringify(endereco)};
-
-        campo.dispatchEvent(
-          new Event('input', { bubbles: true })
-        );
-
-        campo.dispatchEvent(
-          new Event('change', { bubbles: true })
-        );
-
-        clearInterval(timer);
+    (function() {
+      if (location.hostname !== 'snapinsta.com.br' && !location.hostname.endsWith('.snapinsta.com.br')) return;
+      if (window.snapInstaIniciado) return;
+      window.snapInstaIniciado = true;
+      const link = ${JSON.stringify(endereco)};
+      let preenchido = false;
+      let anterior = '';
+      function enviar(url) {
+        try {
+          const u = new URL(url, location.href);
+          if (u.protocol !== 'https:' || !['cdninstagram.com','fbcdn.net'].some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return;
+          if (u.href === anterior) return;
+          anterior = u.href;
+          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:u.href, midia:'video'}));
+        } catch (_) {}
       }
-
-      if (tentativas >= 40) {
-        clearInterval(timer);
+      function verificar() {
+        const campo = document.querySelector('input[type="url"], input[placeholder*="Instagram"], input[type="text"]');
+        if (campo && !preenchido && document.readyState === 'complete') {
+          preenchido = true;
+          campo.focus();
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(campo, link);
+          campo.dispatchEvent(new Event('input', {bubbles:true}));
+          campo.dispatchEvent(new Event('change', {bubbles:true}));
+          campo.blur();
+        }
+        for (const video of document.querySelectorAll('video')) {
+          enviar(video.currentSrc || video.src);
+          for (const source of video.querySelectorAll('source[src]')) enviar(source.src);
+        }
       }
-    }, 500);
-  })();
-
-  true;
-`;
-
+      document.addEventListener('click', function(e) {
+        const a = e.target.closest('a[href]');
+        if (!a || a.textContent.trim().toLowerCase() !== 'download') return;
+        try {
+          const u = new URL(a.href);
+          if (u.protocol === 'https:' && ['cdninstagram.com','fbcdn.net'].some(d => u.hostname === d || u.hostname.endsWith('.' + d))) {
+            e.preventDefault();
+            window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'video',url:u.href}));
+          }
+        } catch (_) {}
+      }, true);
+      setInterval(verificar, 700);
+      verificar();
+    })();
+    true;
+  `;
   const scriptRedeSocial = `
     (function() {
       const dominios = ${JSON.stringify(plataforma?.dominios ?? [])};
@@ -271,7 +252,6 @@ export default function NavegadorScreen() {
     })();
     true;
   `;
-
   function urlVideoValida(valor: string) {
     try {
       const u = new URL(valor);
@@ -284,44 +264,34 @@ export default function NavegadorScreen() {
       return false;
     }
   }
-
   async function salvarNaGaleria(uri: string) {
     try {
       const configuracao = await AsyncStorage.getItem(
         "@TikDownload:salvarGaleria",
       );
-
       if (configuracao === "false") {
         return;
       }
-
       const permissao = await MediaLibrary.requestPermissionsAsync(true);
-
       if (!permissao.granted) {
         console.log("Permissão da galeria não concedida.");
         return;
       }
-
       await MediaLibrary.saveToLibraryAsync(uri);
-
       console.log("VÍDEO SALVO NA GALERIA");
     } catch (erro) {
       console.log("ERRO AO SALVAR NA GALERIA:", erro);
     }
   }
-
   async function receberMensagem(mensagem: string) {
     let downloadId: string | null = null;
     let destino: string | null = null;
-
     try {
       const dados = JSON.parse(mensagem);
-
       if (redeDireta && dados.tipo === "semCandidato") {
         setVideoDetectado(null);
         return;
       }
-
       if (redeDireta && dados.tipo === "candidato") {
         if (typeof dados.url === "string" && urlVideoValida(dados.url)) {
           setVideoDetectado(dados.url);
@@ -329,12 +299,10 @@ export default function NavegadorScreen() {
         }
         return;
       }
-
       if (dados.tipo === "verificacao") {
         setMostrarSite(true);
         return;
       }
-
       if (
         (dados.tipo !== "video" && !(story && dados.tipo === "foto")) ||
         typeof dados.url !== "string" ||
@@ -344,25 +312,17 @@ export default function NavegadorScreen() {
       ) {
         return;
       }
-
       recebido.current = true;
-
       const foto = story && dados.tipo === "foto";
       const nome = `${story ? "Instagram_Story" : (plataforma?.nome ?? "TikTok")}_${Date.now()}.${foto ? "jpg" : "mp4"}`;
-
       downloadId = iniciarDownload(nome);
-
       const id = downloadId;
-
       const pasta =
         FileSystem.documentDirectory + (foto ? "status/" : "videos/");
-
       await FileSystem.makeDirectoryAsync(pasta, {
         intermediates: true,
       });
-
       destino = pasta + nome;
-
       const download = FileSystem.createDownloadResumable(
         dados.url,
         destino,
@@ -373,38 +333,29 @@ export default function NavegadorScreen() {
               (progresso.totalBytesWritten /
                 progresso.totalBytesExpectedToWrite) *
               100;
-
             atualizarDownload(id, {
               progresso: Math.min(99, Math.round(percentual)),
               tamanho: progresso.totalBytesWritten,
             });
-
             console.log("Baixando:", percentual.toFixed(0) + "%");
           }
         },
       );
-
       // Abre nossa aba Downloads antes da conclusão.
       router.replace("/(tabs)/downloads");
-
       const resultado = await download.downloadAsync();
-
       if (!resultado || resultado.status !== 200) {
         throw new Error("Falha no download.");
       }
-
       const arquivo = await FileSystem.getInfoAsync(resultado.uri);
-
       if (!arquivo.exists || !arquivo.size) {
         throw new Error("Arquivo inválido.");
       }
-
       const assinatura = await FileSystem.readAsStringAsync(destino, {
         encoding: FileSystem.EncodingType.Base64,
         position: foto ? 0 : 4,
         length: foto ? 3 : 4,
       });
-
       if (assinatura !== (foto ? "/9j/" : "ZnR5cA==")) {
         throw new Error(
           foto
@@ -412,45 +363,35 @@ export default function NavegadorScreen() {
             : "O arquivo recebido não é um MP4 válido.",
         );
       }
-
       concluirDownload(id, resultado.uri, arquivo.size);
-
       await salvarNaGaleria(resultado.uri);
-
       console.log("FORMATO MP4 CONFIRMADO");
       console.log("VÍDEO SALVO:", resultado.uri);
     } catch (erro) {
       recebido.current = false;
-
       const mensagemErro =
         erro instanceof Error
           ? erro.message
           : "Não foi possível baixar o vídeo.";
-
       if (downloadId) {
         falharDownload(downloadId, mensagemErro);
       }
-
       if (destino) {
         await FileSystem.deleteAsync(destino, {
           idempotent: true,
         }).catch(() => {});
       }
-
       console.log("ERRO NO DOWNLOAD:", erro);
     }
   }
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={25} color="#075985" />
         </Pressable>
-
         <Text style={styles.title}>{plataforma?.nome ?? "SocialDownload"}</Text>
       </View>
-
       <View style={styles.browserContainer}>
         <WebView
           source={{
@@ -479,6 +420,10 @@ export default function NavegadorScreen() {
             if (usarSnapInsta) {
               try {
                 const url = new URL(request.url);
+                if (urlVideoValida(url.href) && url.pathname.toLowerCase().endsWith(".mp4")) {
+                  void receberMensagem(JSON.stringify({ tipo: "video", url: url.href }));
+                  return false;
+                }
                 return (
                   url.protocol === "https:" &&
                   pertence(url.hostname, ["snapinsta.com.br"])
@@ -503,13 +448,12 @@ export default function NavegadorScreen() {
             void receberMensagem(event.nativeEvent.data);
           }}
         />
-
-        {redeDireta && !usarSnapInsta && (
+        {redeDireta && (
           <View style={{ padding: 12, backgroundColor: "#E6F4FE" }}>
             <Text style={styles.processingText}>
               {videoDetectado
                 ? "Mídia detectada. Salve apenas conteúdo autorizado."
-                : "Reproduza o vídeo. Se o botão continuar desativado, não foi encontrado um arquivo direto disponível."}
+                : usarSnapInsta ? "Se o link não for reconhecido, cole novamente. Quando a mídia for detectada, use Salvar vídeo abaixo." : "Reproduza o vídeo. Se o botão continuar desativado, não foi encontrado um arquivo direto disponível."}
             </Text>
             <Pressable
               disabled={!videoDetectado}
@@ -546,27 +490,21 @@ export default function NavegadorScreen() {
                 size={65}
                 color="#075985"
               />
-
               <Text style={styles.processingTitle}>Processando vídeo</Text>
-
               <ActivityIndicator
                 size="large"
                 color="#075985"
                 style={styles.loading}
               />
-
               <Text style={styles.processingText}>
                 Localizando o arquivo de vídeo.
               </Text>
-
               <Text style={styles.waitText}>Aguarde alguns instantes...</Text>
-
               <Pressable
                 style={styles.manualButton}
                 onPress={() => setMostrarSite(true)}
               >
                 <Ionicons name="globe-outline" size={18} color="#075985" />
-
                 <Text style={styles.manualText}>Abrir página de download</Text>
               </Pressable>
             </View>
@@ -576,13 +514,11 @@ export default function NavegadorScreen() {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#FFFFFF",
   },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -592,25 +528,20 @@ const styles = StyleSheet.create({
     gap: 15,
     backgroundColor: "#E6F4FE",
   },
-
   backButton: {
     padding: 8,
   },
-
   title: {
     fontFamily: "Poppins_600SemiBold",
     fontSize: 20,
     color: "#183B56",
   },
-
   browserContainer: {
     flex: 1,
   },
-
   webview: {
     flex: 1,
   },
-
   processingScreen: {
     position: "absolute",
     top: 0,
@@ -622,7 +553,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 22,
   },
-
   processingCard: {
     width: "100%",
     alignItems: "center",
@@ -633,7 +563,6 @@ const styles = StyleSheet.create({
     paddingVertical: 30,
     paddingHorizontal: 15,
   },
-
   processingTitle: {
     fontFamily: "Poppins_700Bold",
     fontSize: 21,
@@ -641,25 +570,21 @@ const styles = StyleSheet.create({
     marginTop: 15,
     textAlign: "center",
   },
-
   loading: {
     marginVertical: 25,
   },
-
   processingText: {
     fontFamily: "Poppins_500Medium",
     fontSize: 12,
     color: "#183B56",
     textAlign: "center",
   },
-
   waitText: {
     fontFamily: "Poppins_400Regular",
     fontSize: 11,
     color: "#475569",
     marginTop: 5,
   },
-
   manualButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -673,7 +598,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: "rgba(255,255,255,0.35)",
   },
-
   manualText: {
     fontFamily: "Poppins_500Medium",
     fontSize: 11,

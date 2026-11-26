@@ -26,6 +26,8 @@ jobs:
 
       - name: Configurar Android
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""v3
 
       - name: Instalar dependências
         run: npm ci

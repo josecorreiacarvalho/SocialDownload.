@@ -32,19 +32,45 @@ export default function NavegadorScreen() {
 
   const endereco = typeof link === "string" ? link : "";
   const plataformas = [
-    { nome: "Instagram", dominios: ["instagram.com"], cdns: ["cdninstagram.com", "fbcdn.net"] },
-    { nome: "Facebook", dominios: ["facebook.com", "fb.watch", "fb.com"], cdns: ["fbcdn.net"] },
-    { nome: "Pinterest", dominios: ["pinterest.com", "pinterest.com.br", "pin.it"], cdns: ["pinimg.com"] },
-    { nome: "X", dominios: ["x.com", "twitter.com"], cdns: ["video.twimg.com"] },
+    {
+      nome: "Instagram",
+      dominios: ["instagram.com"],
+      cdns: ["cdninstagram.com", "fbcdn.net"],
+    },
+    {
+      nome: "Facebook",
+      dominios: ["facebook.com", "fb.watch", "fb.com"],
+      cdns: ["fbcdn.net"],
+    },
+    {
+      nome: "Pinterest",
+      dominios: ["pinterest.com", "pinterest.com.br", "pin.it"],
+      cdns: ["pinimg.com"],
+    },
+    {
+      nome: "X",
+      dominios: ["x.com", "twitter.com"],
+      cdns: ["video.twimg.com"],
+    },
   ];
-  const pertence = (host: string, dominios: string[]) => dominios.some(d => host === d || host.endsWith("." + d));
+  const pertence = (host: string, dominios: string[]) =>
+    dominios.some((d) => host === d || host.endsWith("." + d));
   const plataforma = (() => {
     try {
       const u = new URL(endereco);
-      return u.protocol === "https:" ? plataformas.find(p => pertence(u.hostname, p.dominios)) : undefined;
-    } catch { return undefined; }
+      return u.protocol === "https:"
+        ? plataformas.find((p) => pertence(u.hostname, p.dominios))
+        : undefined;
+    } catch {
+      return undefined;
+    }
   })();
   const redeDireta = !!plataforma;
+  const usarSnapInsta = plataforma?.nome === "Instagram";
+  const story =
+    plataforma?.nome === "Instagram" &&
+    /^https:\/\/[^/]+\/stories\//i.test(endereco);
+  const [tipoDetectado, setTipoDetectado] = useState<"video" | "foto">("video");
   const [videoDetectado, setVideoDetectado] = useState<string | null>(null);
 
   useEffect(() => {
@@ -153,6 +179,43 @@ export default function NavegadorScreen() {
     true;
   `;
 
+  const scriptSnapInsta = `
+  (function() {
+    if (window.snapInstaIniciado) return;
+    window.snapInstaIniciado = true;
+
+    let tentativas = 0;
+
+    const timer = setInterval(function() {
+      tentativas++;
+
+      const campo = document.querySelector(
+        'input[type="url"], input[type="text"]'
+      );
+
+      if (campo) {
+        campo.value = ${JSON.stringify(endereco)};
+
+        campo.dispatchEvent(
+          new Event('input', { bubbles: true })
+        );
+
+        campo.dispatchEvent(
+          new Event('change', { bubbles: true })
+        );
+
+        clearInterval(timer);
+      }
+
+      if (tentativas >= 40) {
+        clearInterval(timer);
+      }
+    }, 500);
+  })();
+
+  true;
+`;
+
   const scriptRedeSocial = `
     (function() {
       const dominios = ${JSON.stringify(plataforma?.dominios ?? [])};
@@ -162,21 +225,36 @@ export default function NavegadorScreen() {
       if (window.socialDownloadObservando) return;
       window.socialDownloadObservando = true;
       let anterior = '';
+      const story = ${JSON.stringify(story)};
       function verificar() {
         const videos = Array.from(document.querySelectorAll('video'));
         const video = videos.find(v => !v.paused) || (videos.length === 1 ? videos[0] : null);
+        let tipo = "video";
         const urls = video ? [video.currentSrc, video.src, ...Array.from(video.querySelectorAll('source')).map(s => s.src)] : [];
         if (${JSON.stringify(plataforma?.nome === "Instagram")}) {
           const meta = document.querySelectorAll('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"]');
           for (const item of meta) urls.push(item.content);
         } else if (!video) return;
+        if (story && !location.pathname.startsWith('/stories/')) {
+          anterior = '';
+          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'semCandidato'}));
+          return;
+        }
+        if (story && !video && !urls.length) {
+          const imagens = Array.from(document.querySelectorAll('img')).filter(img => {
+            const r = img.getBoundingClientRect();
+            return img.naturalWidth >= 300 && r.width >= 180 && r.height >= 220 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+          });
+          imagens.sort((a,b) => b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight);
+          if (imagens.length) { urls.push(imagens[0].currentSrc || imagens[0].src); tipo = 'foto'; }
+        }
         for (const valor of urls) {
           try {
             const u = new URL(valor);
             if (u.protocol !== 'https:' || !pertence(u.hostname, cdns)) continue;
             if (u.href !== anterior) {
               anterior = u.href;
-              window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:u.href}));
+              window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:u.href, midia:tipo}));
             }
             return;
           } catch (_) {}
@@ -197,37 +275,40 @@ export default function NavegadorScreen() {
   function urlVideoValida(valor: string) {
     try {
       const u = new URL(valor);
-      return u.protocol === "https:" &&
-        !!plataforma && pertence(u.hostname, plataforma.cdns);
-    } catch { return false; }
+      return (
+        u.protocol === "https:" &&
+        !!plataforma &&
+        pertence(u.hostname, plataforma.cdns)
+      );
+    } catch {
+      return false;
+    }
   }
 
   async function salvarNaGaleria(uri: string) {
-  try {
-    const configuracao = await AsyncStorage.getItem(
-      "@TikDownload:salvarGaleria"
-    );
+    try {
+      const configuracao = await AsyncStorage.getItem(
+        "@TikDownload:salvarGaleria",
+      );
 
-    if (configuracao === "false") {
-      return;
+      if (configuracao === "false") {
+        return;
+      }
+
+      const permissao = await MediaLibrary.requestPermissionsAsync(true);
+
+      if (!permissao.granted) {
+        console.log("Permissão da galeria não concedida.");
+        return;
+      }
+
+      await MediaLibrary.saveToLibraryAsync(uri);
+
+      console.log("VÍDEO SALVO NA GALERIA");
+    } catch (erro) {
+      console.log("ERRO AO SALVAR NA GALERIA:", erro);
     }
-
-    const permissao =
-      await MediaLibrary.requestPermissionsAsync(true);
-
-    if (!permissao.granted) {
-      console.log("Permissão da galeria não concedida.");
-      return;
-    }
-
-    await MediaLibrary.saveToLibraryAsync(uri);
-
-    console.log("VÍDEO SALVO NA GALERIA");
-
-  } catch (erro) {
-    console.log("ERRO AO SALVAR NA GALERIA:", erro);
   }
-}
 
   async function receberMensagem(mensagem: string) {
     let downloadId: string | null = null;
@@ -244,6 +325,7 @@ export default function NavegadorScreen() {
       if (redeDireta && dados.tipo === "candidato") {
         if (typeof dados.url === "string" && urlVideoValida(dados.url)) {
           setVideoDetectado(dados.url);
+          setTipoDetectado(story && dados.midia === "foto" ? "foto" : "video");
         }
         return;
       }
@@ -254,7 +336,7 @@ export default function NavegadorScreen() {
       }
 
       if (
-        dados.tipo !== "video" ||
+        (dados.tipo !== "video" && !(story && dados.tipo === "foto")) ||
         typeof dados.url !== "string" ||
         !dados.url.startsWith("https://") ||
         (redeDireta && !urlVideoValida(dados.url)) ||
@@ -265,14 +347,15 @@ export default function NavegadorScreen() {
 
       recebido.current = true;
 
-      const nome = `${plataforma?.nome ?? "TikTok"}_${Date.now()}.mp4`;
+      const foto = story && dados.tipo === "foto";
+      const nome = `${story ? "Instagram_Story" : (plataforma?.nome ?? "TikTok")}_${Date.now()}.${foto ? "jpg" : "mp4"}`;
 
       downloadId = iniciarDownload(nome);
 
       const id = downloadId;
 
       const pasta =
-        FileSystem.documentDirectory + "videos/";
+        FileSystem.documentDirectory + (foto ? "status/" : "videos/");
 
       await FileSystem.makeDirectoryAsync(pasta, {
         intermediates: true,
@@ -292,19 +375,13 @@ export default function NavegadorScreen() {
               100;
 
             atualizarDownload(id, {
-              progresso: Math.min(
-                99,
-                Math.round(percentual)
-              ),
+              progresso: Math.min(99, Math.round(percentual)),
               tamanho: progresso.totalBytesWritten,
             });
 
-            console.log(
-              "Baixando:",
-              percentual.toFixed(0) + "%"
-            );
+            console.log("Baixando:", percentual.toFixed(0) + "%");
           }
-        }
+        },
       );
 
       // Abre nossa aba Downloads antes da conclusão.
@@ -316,41 +393,32 @@ export default function NavegadorScreen() {
         throw new Error("Falha no download.");
       }
 
-      const arquivo = await FileSystem.getInfoAsync(
-        resultado.uri
-      );
+      const arquivo = await FileSystem.getInfoAsync(resultado.uri);
 
       if (!arquivo.exists || !arquivo.size) {
         throw new Error("Arquivo inválido.");
       }
 
-      const assinatura =
-        await FileSystem.readAsStringAsync(
-          destino,
-          {
-            encoding: FileSystem.EncodingType.Base64,
-            position: 4,
-            length: 4,
-          }
-        );
+      const assinatura = await FileSystem.readAsStringAsync(destino, {
+        encoding: FileSystem.EncodingType.Base64,
+        position: foto ? 0 : 4,
+        length: foto ? 3 : 4,
+      });
 
-      if (assinatura !== "ZnR5cA==") {
+      if (assinatura !== (foto ? "/9j/" : "ZnR5cA==")) {
         throw new Error(
-          "O arquivo recebido não é um MP4 válido."
+          foto
+            ? "A imagem recebida não é JPEG."
+            : "O arquivo recebido não é um MP4 válido.",
         );
       }
 
-      concluirDownload(
-        id,
-        resultado.uri,
-        arquivo.size
-      );
+      concluirDownload(id, resultado.uri, arquivo.size);
 
       await salvarNaGaleria(resultado.uri);
 
       console.log("FORMATO MP4 CONFIRMADO");
       console.log("VÍDEO SALVO:", resultado.uri);
-
     } catch (erro) {
       recebido.current = false;
 
@@ -370,67 +438,103 @@ export default function NavegadorScreen() {
       }
 
       console.log("ERRO NO DOWNLOAD:", erro);
-
     }
   }
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Ionicons
-            name="arrow-back"
-            size={25}
-            color="#075985"
-          />
+        <Pressable onPress={() => router.back()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={25} color="#075985" />
         </Pressable>
 
-        <Text style={styles.title}>
-          {plataforma?.nome ?? "SocialDownload"}
-        </Text>
+        <Text style={styles.title}>{plataforma?.nome ?? "SocialDownload"}</Text>
       </View>
 
       <View style={styles.browserContainer}>
         <WebView
-          source={{ uri: redeDireta ? endereco : "https://ssstik.io/" }}
+          source={{
+            uri: usarSnapInsta
+              ? "https://snapinsta.com.br/"
+              : redeDireta
+                ? endereco
+                : "https://ssstik.io/",
+          }}
           style={styles.webview}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState
           allowsInlineMediaPlayback
-          onLoadStart={() => { if (redeDireta) setVideoDetectado(null); }}
-          injectedJavaScript={redeDireta ? scriptRedeSocial : scriptTikTok}
+          onLoadStart={() => {
+            if (redeDireta) setVideoDetectado(null);
+          }}
+          injectedJavaScript={
+            usarSnapInsta
+              ? scriptSnapInsta
+              : redeDireta
+                ? scriptRedeSocial
+                : scriptTikTok
+          }
           onShouldStartLoadWithRequest={(request) => {
+            if (usarSnapInsta) {
+              try {
+                const url = new URL(request.url);
+                return (
+                  url.protocol === "https:" &&
+                  pertence(url.hostname, ["snapinsta.com.br"])
+                );
+              } catch {
+                return false;
+              }
+            }
             if (!redeDireta) return true;
             try {
               const u = new URL(request.url);
-              return u.protocol === "https:" && !!plataforma && pertence(u.hostname, plataforma.dominios);
-            } catch { return false; }
+              return (
+                u.protocol === "https:" &&
+                !!plataforma &&
+                pertence(u.hostname, plataforma.dominios)
+              );
+            } catch {
+              return false;
+            }
           }}
           onMessage={(event) => {
-            void receberMensagem(
-              event.nativeEvent.data
-            );
+            void receberMensagem(event.nativeEvent.data);
           }}
         />
 
-        {redeDireta && (
+        {redeDireta && !usarSnapInsta && (
           <View style={{ padding: 12, backgroundColor: "#E6F4FE" }}>
             <Text style={styles.processingText}>
-              {videoDetectado ? "Vídeo detectado. Salve apenas conteúdo autorizado." : "Reproduza o vídeo. Se o botão continuar desativado, não foi encontrado um arquivo direto disponível."}
+              {videoDetectado
+                ? "Mídia detectada. Salve apenas conteúdo autorizado."
+                : "Reproduza o vídeo. Se o botão continuar desativado, não foi encontrado um arquivo direto disponível."}
             </Text>
             <Pressable
               disabled={!videoDetectado}
-              style={[styles.manualButton, { marginTop: 8, opacity: videoDetectado ? 1 : 0.5 }]}
+              style={[
+                styles.manualButton,
+                { marginTop: 8, opacity: videoDetectado ? 1 : 0.5 },
+              ]}
               onPress={() => {
-                if (videoDetectado) void receberMensagem(JSON.stringify({ tipo: "video", url: videoDetectado }));
+                if (videoDetectado)
+                  void receberMensagem(
+                    JSON.stringify({
+                      tipo: tipoDetectado,
+                      url: videoDetectado,
+                    }),
+                  );
               }}
             >
               <Ionicons name="download-outline" size={20} color="#075985" />
-              <Text style={styles.manualText}>Salvar vídeo</Text>
+              <Text style={styles.manualText}>
+                {story
+                  ? tipoDetectado === "foto"
+                    ? "Salvar foto"
+                    : "Salvar Story"
+                  : "Salvar vídeo"}
+              </Text>
             </Pressable>
           </View>
         )}
@@ -443,9 +547,7 @@ export default function NavegadorScreen() {
                 color="#075985"
               />
 
-              <Text style={styles.processingTitle}>
-                Processando vídeo
-              </Text>
+              <Text style={styles.processingTitle}>Processando vídeo</Text>
 
               <ActivityIndicator
                 size="large"
@@ -457,23 +559,15 @@ export default function NavegadorScreen() {
                 Localizando o arquivo de vídeo.
               </Text>
 
-              <Text style={styles.waitText}>
-                Aguarde alguns instantes...
-              </Text>
+              <Text style={styles.waitText}>Aguarde alguns instantes...</Text>
 
               <Pressable
                 style={styles.manualButton}
                 onPress={() => setMostrarSite(true)}
               >
-                <Ionicons
-                  name="globe-outline"
-                  size={18}
-                  color="#075985"
-                />
+                <Ionicons name="globe-outline" size={18} color="#075985" />
 
-                <Text style={styles.manualText}>
-                  Abrir página de download
-                </Text>
+                <Text style={styles.manualText}>Abrir página de download</Text>
               </Pressable>
             </View>
           </View>

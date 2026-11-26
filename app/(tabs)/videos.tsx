@@ -14,14 +14,21 @@ import { useFocusEffect } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
-import { carregarDownloads, obterDownloads, atualizarDownload } from "../../downloadStorage";
+import {
+  carregarDownloads,
+  obterDownloads,
+  atualizarDownload,
+} from "../../downloadStorage";
 
 import AlertaPersonalizado from "../../components/AlertaPersonalizado";
 
 const BLUE = "#075985";
 const DARK = "#183B56";
 
-const PASTA = FileSystem.documentDirectory + "videos/";
+const PASTAS = [
+  FileSystem.documentDirectory + "videos/",
+  FileSystem.documentDirectory + "status/",
+];
 
 type VideoItem = {
   nome: string;
@@ -109,36 +116,35 @@ export default function VideosScreen() {
     setAlerta({ titulo, mensagem });
   }
 
-
   const carregarVideos = useCallback(async () => {
     try {
-      const pasta = await FileSystem.getInfoAsync(PASTA);
-
-      if (!pasta.exists) {
-        setVideos([]);
-        return;
-      }
-
-      const arquivos = await FileSystem.readDirectoryAsync(PASTA);
-
       const lista: VideoItem[] = [];
 
-      for (const nome of arquivos) {
-        if (!nome.toLowerCase().endsWith(".mp4")) {
+      for (const pasta of PASTAS) {
+        const pastaInfo = await FileSystem.getInfoAsync(pasta);
+
+        if (!pastaInfo.exists || !pastaInfo.isDirectory) {
           continue;
         }
 
-        const uri = PASTA + nome;
+        const arquivos = await FileSystem.readDirectoryAsync(pasta);
 
-        const info = await FileSystem.getInfoAsync(uri);
+        for (const nome of arquivos) {
+          if (!nome.toLowerCase().endsWith(".mp4")) {
+            continue;
+          }
 
-        if (info.exists && !info.isDirectory) {
-          lista.push({
-            nome,
-            uri,
-            tamanho: info.size ?? 0,
-            data: (info.modificationTime ?? 0) * 1000,
-          });
+          const uri = pasta + nome;
+          const info = await FileSystem.getInfoAsync(uri);
+
+          if (info.exists && !info.isDirectory) {
+            lista.push({
+              nome,
+              uri,
+              tamanho: info.size ?? 0,
+              data: (info.modificationTime ?? 0) * 1000,
+            });
+          }
         }
       }
 
@@ -149,7 +155,6 @@ export default function VideosScreen() {
       console.log("ERRO AO CARREGAR VÍDEOS:", erro);
     }
   }, []);
-
   useFocusEffect(
     useCallback(() => {
       void carregarVideos();
@@ -212,9 +217,19 @@ export default function VideosScreen() {
   async function salvarNome() {
     if (!renomeando || salvando) return;
     setErroNome("");
-    const base = novoNome.trim().replace(/\\.mp4$/i, "").trim();
-    if (!base || base === "." || base === ".." || /[\\\/:*?"<>|%#\x00-\x1f]/.test(base)) {
-      setErroNome("Digite um nome válido, sem caracteres especiais de arquivo.");
+    const base = novoNome
+      .trim()
+      .replace(/\\.mp4$/i, "")
+      .trim();
+    if (
+      !base ||
+      base === "." ||
+      base === ".." ||
+      /[\\\/:*?"<>|%#\x00-\x1f]/.test(base)
+    ) {
+      setErroNome(
+        "Digite um nome válido, sem caracteres especiais de arquivo.",
+      );
       return;
     }
     const nome = base + ".mp4";
@@ -222,7 +237,12 @@ export default function VideosScreen() {
       setRenomeando(null);
       return;
     }
-    const destino = PASTA + nome;
+    const pastaOriginal = renomeando.uri.substring(
+      0,
+      renomeando.uri.lastIndexOf("/") + 1,
+    );
+
+    const destino = pastaOriginal + nome;
     setSalvando(true);
     try {
       await carregarDownloads();
@@ -234,7 +254,11 @@ export default function VideosScreen() {
       await FileSystem.moveAsync({ from: renomeando.uri, to: destino });
       for (const item of obterDownloads()) {
         if (item.uri === renomeando.uri) {
-          atualizarDownload(item.id, { nome, uri: destino, status: "concluido" });
+          atualizarDownload(item.id, {
+            nome,
+            uri: destino,
+            status: "concluido",
+          });
         }
       }
       setRenomeando(null);
@@ -251,10 +275,9 @@ export default function VideosScreen() {
     0,
   );
 
-
- return (
-  <View style={styles.container}>
-    <View style={styles.fixedHeader}>
+  return (
+    <View style={styles.container}>
+      <View style={styles.fixedHeader}>
         <View style={styles.headerIcon}>
           <Ionicons name="videocam-outline" size={40} color={BLUE} />
         </View>
@@ -262,16 +285,14 @@ export default function VideosScreen() {
         <Text style={styles.title}>Vídeos</Text>
 
         <Text style={styles.subtitle}>Sua biblioteca de vídeos</Text>
+      </View>
 
-        </View>
-
-<ScrollView
-  style={styles.scroll}
-  contentContainerStyle={styles.content}
-  showsVerticalScrollIndicator={false}
-  keyboardShouldPersistTaps="handled"
->
-
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.summaryCard}>
           <View style={styles.summaryItem}>
             <Ionicons name="film-outline" size={26} color={BLUE} />
@@ -303,9 +324,7 @@ export default function VideosScreen() {
             <View style={styles.emptyContainer}>
               <Ionicons name="film-outline" size={48} color="#54758A" />
 
-              <Text style={styles.emptyTitle}>
-                Nenhum vídeo salvo
-              </Text>
+              <Text style={styles.emptyTitle}>Nenhum vídeo salvo</Text>
 
               <Text style={styles.emptyText}>
                 Seus vídeos baixados aparecerão aqui.
@@ -322,7 +341,11 @@ export default function VideosScreen() {
                   <Miniatura uri={video.uri} />
 
                   <View style={styles.videoInfo}>
-                    <Text style={styles.videoName} numberOfLines={1} ellipsizeMode="middle">
+                    <Text
+                      style={styles.videoName}
+                      numberOfLines={1}
+                      ellipsizeMode="middle"
+                    >
                       {video.nome}
                     </Text>
 
@@ -387,14 +410,24 @@ export default function VideosScreen() {
       </ScrollView>
 
       {renomeando && (
-        <Modal transparent visible animationType="fade" onRequestClose={() => { if (!salvando) setRenomeando(null); }}>
+        <Modal
+          transparent
+          visible
+          animationType="fade"
+          onRequestClose={() => {
+            if (!salvando) setRenomeando(null);
+          }}
+        >
           <View style={styles.modalBackground}>
             <View style={styles.playerCard}>
               <Text style={styles.playerTitle}>Renomear vídeo</Text>
               <TextInput
                 style={styles.renameInput}
                 value={novoNome}
-                onChangeText={(texto) => { setNovoNome(texto); setErroNome(""); }}
+                onChangeText={(texto) => {
+                  setNovoNome(texto);
+                  setErroNome("");
+                }}
                 editable={!salvando}
                 maxLength={100}
                 autoCorrect={false}
@@ -402,14 +435,26 @@ export default function VideosScreen() {
                 placeholder="Nome do vídeo"
                 placeholderTextColor="#64748B"
               />
-              <Text style={styles.videoDetails}>A extensão .mp4 será mantida.</Text>
-                {!!erroNome && <Text style={styles.renameError}>{erroNome}</Text>}
+              <Text style={styles.videoDetails}>
+                A extensão .mp4 será mantida.
+              </Text>
+              {!!erroNome && <Text style={styles.renameError}>{erroNome}</Text>}
               <View style={styles.actions}>
-                <Pressable disabled={salvando} style={styles.actionButton} onPress={() => setRenomeando(null)}>
+                <Pressable
+                  disabled={salvando}
+                  style={styles.actionButton}
+                  onPress={() => setRenomeando(null)}
+                >
                   <Text style={styles.renameButtonText}>Cancelar</Text>
                 </Pressable>
-                <Pressable disabled={salvando} style={styles.actionButton} onPress={() => void salvarNome()}>
-                  <Text style={styles.renameButtonText}>{salvando ? "Salvando..." : "Salvar"}</Text>
+                <Pressable
+                  disabled={salvando}
+                  style={styles.actionButton}
+                  onPress={() => void salvarNome()}
+                >
+                  <Text style={styles.renameButtonText}>
+                    {salvando ? "Salvando..." : "Salvar"}
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -440,21 +485,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-fixedHeader: {
-  paddingTop: 25,
-  paddingHorizontal: 14,
-},
+  fixedHeader: {
+    paddingTop: 25,
+    paddingHorizontal: 14,
+  },
 
-scroll: {
-  flex: 1,
-  marginBottom: 64,
-},
+  scroll: {
+    flex: 1,
+    marginBottom: 64,
+  },
 
-content: {
-  paddingTop: 0,
-  paddingHorizontal: 14,
-  paddingBottom: 10,
-},
+  content: {
+    paddingTop: 0,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+  },
 
   headerIcon: {
     alignSelf: "center",
@@ -519,11 +564,11 @@ content: {
     backgroundColor: "rgba(100,130,160,0.30)",
   },
 
-card: {
-  backgroundColor: "transparent",
-  padding: 0,
-  marginBottom: 0,
-},
+  card: {
+    backgroundColor: "transparent",
+    padding: 0,
+    marginBottom: 0,
+  },
 
   cardHeader: {
     flexDirection: "row",
@@ -556,14 +601,14 @@ card: {
     textAlign: "center",
   },
 
-videoCard: {
-  backgroundColor: "rgba(255,255,255,0.45)",
-  borderWidth: 1,
-  borderColor: "rgba(100,130,160,0.40)",
-  borderRadius: 18,
-  padding: 8,
-  marginTop: 15,
-},
+  videoCard: {
+    backgroundColor: "rgba(255,255,255,0.45)",
+    borderWidth: 1,
+    borderColor: "rgba(100,130,160,0.40)",
+    borderRadius: 18,
+    padding: 8,
+    marginTop: 15,
+  },
 
   videoRow: {
     flexDirection: "row",

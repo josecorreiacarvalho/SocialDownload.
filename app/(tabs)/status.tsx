@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FS from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useCallback, useRef, useState } from "react";
@@ -14,22 +14,20 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import AlertaPersonalizado from "../../components/AlertaPersonalizado";
-
 import {
   carregarDownloads,
   concluirDownload,
   falharDownload,
   iniciarDownload,
 } from "../../downloadStorage";
-
 const KEY = "@SocialDownload:statusPasta";
 const SAF = FS.StorageAccessFramework;
 type Midia = { uri: string; nome: string; video: boolean };
 type Filtro = "Fotos" | "Vídeos";
-
 function VideoStatus({
   uri,
   reproduzir = false,
@@ -51,8 +49,20 @@ function VideoStatus({
     />
   );
 }
-
 export default function StatusScreen() {
+  const router = useRouter();
+  const [rede, setRede] = useState<"WhatsApp" | "Instagram">("WhatsApp");
+  const [linkStory, setLinkStory] = useState("");
+  function abrirStory() {
+    try {
+      const url = new URL(linkStory.trim());
+      if (url.protocol !== "https:" || !(url.hostname === "instagram.com" || url.hostname.endsWith(".instagram.com")) || !url.pathname.startsWith("/stories/")) throw new Error();
+      router.push({ pathname: "/navegador", params: { link: url.href } });
+    } catch {
+      setAlerta({ titulo: "Link inválido", mensagem: "Cole um link de Story do Instagram." });
+    }
+  }
+
   const [midias, setMidias] = useState<Midia[]>([]);
   const [pasta, setPasta] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<Filtro>("Fotos");
@@ -66,7 +76,6 @@ export default function StatusScreen() {
     mensagem: string;
   } | null>(null);
   const trava = useRef(false);
-
   const carregar = useCallback(async (escolher = false) => {
     if (trava.current) return;
     trava.current = true;
@@ -111,13 +120,11 @@ export default function StatusScreen() {
       setOcupado(false);
     }
   }, []);
-
   useFocusEffect(
     useCallback(() => {
       void carregar();
     }, [carregar]),
   );
-
   async function executar(item: Midia, acao: "salvar" | "compartilhar") {
     if (trava.current) return;
     trava.current = true;
@@ -130,7 +137,7 @@ export default function StatusScreen() {
       const extensao =
         item.nome.split(".").pop()?.toLowerCase() ||
         (item.video ? "mp4" : "jpg");
-      const nome = `Status_${Date.now()}.${extensao}`;
+      const nome = `WhatsApp_${Date.now()}.${extensao}`;
       if (acao === "salvar") {
         if (!FS.documentDirectory)
           throw new Error("Armazenamento indisponível.");
@@ -185,21 +192,39 @@ export default function StatusScreen() {
       setOcupado(false);
     }
   }
-
   const lista = midias.filter((m) =>
     filtro === "Vídeos" ? m.video : !m.video,
   );
-
   return (
     <View style={styles.container}>
       <Ionicons
-        name="logo-whatsapp"
+        name={rede === "WhatsApp" ? "logo-whatsapp" : "logo-instagram"}
         size={48}
         color="#075985"
         style={styles.headerIcon}
       />
       <Text style={styles.title}>Status</Text>
-      <Text style={styles.subtitle}>Salve fotos e vídeos do WhatsApp</Text>
+      <Text style={styles.subtitle}>Salve fotos e vídeos das redes sociais</Text>
+      <View style={styles.filters}>
+        {(["WhatsApp", "Instagram"] as const).map((r) => (
+          <Pressable key={r} onPress={() => setRede(r)} style={[styles.filter, rede === r && styles.filterActive, { flexDirection: "row", justifyContent: "center", gap: 6 }]}>
+            <Ionicons name={r === "WhatsApp" ? "logo-whatsapp" : "logo-instagram"} size={22} color={rede === r ? "#FFF" : "#075985"} />
+            <Text style={[styles.filterText, rede === r && { color: "#FFF" }]}>{r}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {rede === "Instagram" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Stories do Instagram</Text>
+          <Text style={styles.description}>Cole o link de um Story autorizado para visualizar e tentar salvar a mídia.</Text>
+          <TextInput value={linkStory} onChangeText={setLinkStory} placeholder="Cole o link do Story" placeholderTextColor="#64748B" autoCapitalize="none" autoCorrect={false} keyboardType="url" style={styles.storyInput} />
+          <Pressable style={styles.button} onPress={abrirStory}>
+            <Ionicons name="eye-outline" size={20} color="#FFF" />
+            <Text style={styles.buttonText}>Visualizar Story</Text>
+          </Pressable>
+        </View>
+      ) : (<>
+
       <View style={styles.card}>
         <View style={styles.row}>
           <Ionicons name="folder-open-outline" size={24} color="#075985" />
@@ -309,6 +334,7 @@ export default function StatusScreen() {
           </View>
         )}
       />
+      </>)}
       <Modal
         visible={selecionado !== null}
         animationType="fade"
@@ -371,8 +397,8 @@ export default function StatusScreen() {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
+  storyInput: { borderWidth: 1, borderColor: "#91B5CA", borderRadius: 12, padding: 12, marginBottom: 12, fontFamily: "Poppins_400Regular", fontSize: 12, color: "#183B56", backgroundColor: "rgba(255,255,255,0.45)" },
   container: { flex: 1, paddingTop: 45, paddingHorizontal: 14 },
   headerIcon: { alignSelf: "center", marginBottom: 10 },
   title: {

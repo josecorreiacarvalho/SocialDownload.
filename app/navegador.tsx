@@ -150,50 +150,53 @@ export default function NavegadorScreen() {
   `;
   const scriptSnapInsta = `
     (function() {
-      if (location.hostname !== 'snapinsta.com.br' && !location.hostname.endsWith('.snapinsta.com.br')) return;
+      if (!['snapinsta.com.br','www.snapinsta.com.br'].includes(location.hostname)) return;
       if (window.snapInstaIniciado) return;
       window.snapInstaIniciado = true;
-      const link = ${JSON.stringify(endereco)};
+      const link = ${JSON.stringify(endereco.trim())};
+      let tentativas = 0;
       let preenchido = false;
-      let anterior = '';
-      function enviar(url) {
+      let enviado = false;
+      function enviar(valor) {
+        if (enviado || !valor) return false;
         try {
-          const u = new URL(url, location.href);
-          if (u.protocol !== 'https:' || !['cdninstagram.com','fbcdn.net'].some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return;
-          if (u.href === anterior) return;
-          anterior = u.href;
-          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'candidato', url:u.href, midia:'video'}));
-        } catch (_) {}
+          const u = new URL(valor, location.href);
+          if (u.protocol !== 'https:' || !['cdninstagram.com','fbcdn.net','snapinsta.com.br'].some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return false;
+          enviado = true;
+          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'video', url:u.href}));
+          return true;
+        } catch (_) { return false; }
       }
       function verificar() {
-        const campo = document.querySelector('input[type="url"], input[placeholder*="Instagram"], input[type="text"]');
-        if (campo && !preenchido && document.readyState === 'complete') {
-          preenchido = true;
-          campo.focus();
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-          setter.call(campo, link);
-          campo.dispatchEvent(new Event('input', {bubbles:true}));
-          campo.dispatchEvent(new Event('change', {bubbles:true}));
-          campo.blur();
+        tentativas++;
+        const botoes = Array.from(document.querySelectorAll('button, a[href], input[type="submit"]'));
+        const download = botoes.find(b => (b.textContent || b.value || '').trim().toLowerCase() === 'download' && b.getClientRects().length);
+        if (download) {
+          if (download.tagName === 'A' && download.getAttribute('href') && !download.getAttribute('href').startsWith('#') && enviar(download.href)) return;
+          for (const video of document.querySelectorAll('video')) {
+            if (enviar(video.currentSrc || video.src)) return;
+            for (const source of video.querySelectorAll('source[src]')) if (enviar(source.src)) return;
+          }
         }
-        for (const video of document.querySelectorAll('video')) {
-          enviar(video.currentSrc || video.src);
-          for (const source of video.querySelectorAll('source[src]')) enviar(source.src);
+        if (!preenchido && !download && document.readyState === 'complete' && tentativas >= 5) {
+          const campo = document.querySelector('input[placeholder*="Instagram"], input[type="url"]');
+          const botao = botoes.find(b => (b.textContent || b.value || '').trim().toLowerCase() === 'baixar' && !b.disabled && b.getClientRects().length);
+          if (campo && botao) {
+            preenchido = true;
+            campo.focus();
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(campo, link);
+            campo.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:link}));
+            campo.dispatchEvent(new Event('change', {bubbles:true}));
+            setTimeout(function() { if (campo.value === link && !botao.disabled) botao.click(); }, 1200);
+          }
+        }
+        if (tentativas >= 60) {
+          clearInterval(timer);
+          window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'verificacao'}));
         }
       }
-      document.addEventListener('click', function(e) {
-        const a = e.target.closest('a[href]');
-        if (!a || a.textContent.trim().toLowerCase() !== 'download') return;
-        try {
-          const u = new URL(a.href);
-          if (u.protocol === 'https:' && ['cdninstagram.com','fbcdn.net'].some(d => u.hostname === d || u.hostname.endsWith('.' + d))) {
-            e.preventDefault();
-            window.ReactNativeWebView.postMessage(JSON.stringify({tipo:'video',url:u.href}));
-          }
-        } catch (_) {}
-      }, true);
-      setInterval(verificar, 700);
-      verificar();
+      const timer = setInterval(function() { verificar(); if (enviado) clearInterval(timer); }, 500);
     })();
     true;
   `;
@@ -258,7 +261,8 @@ export default function NavegadorScreen() {
       return (
         u.protocol === "https:" &&
         !!plataforma &&
-        pertence(u.hostname, plataforma.cdns)
+        (pertence(u.hostname, plataforma.cdns) ||
+          (usarSnapInsta && pertence(u.hostname, ["snapinsta.com.br"])))
       );
     } catch {
       return false;
@@ -448,7 +452,7 @@ export default function NavegadorScreen() {
             void receberMensagem(event.nativeEvent.data);
           }}
         />
-        {redeDireta && (
+        {redeDireta && !usarSnapInsta && (
           <View style={{ padding: 12, backgroundColor: "#E6F4FE" }}>
             <Text style={styles.processingText}>
               {videoDetectado
@@ -482,7 +486,7 @@ export default function NavegadorScreen() {
             </Pressable>
           </View>
         )}
-        {!redeDireta && !mostrarSite && (
+        {(!redeDireta || usarSnapInsta) && !mostrarSite && (
           <View style={styles.processingScreen}>
             <View style={styles.processingCard}>
               <Ionicons
